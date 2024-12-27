@@ -1,0 +1,18 @@
+{
+	"version": 2,
+	"configurePresets": [
+		{
+			"name": "linux",
+			"inherits": "vcpkg"
+		},
+
+		{
+			"name": "windows",
+			"inherits": "vcpkg",
+			"generator": "Visual Studio 17 2022",
+			"cacheVariables": {
+				"VCPKG_TARGET_TRIPLET": "x64-windows-static"
+			}
+		}
+	]
+}

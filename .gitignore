@@ -1,0 +1,12 @@
+# Compilation output
+build
+
+# IDE/LSP specific files
+.cache
+.vscode
+
+# VCPKG installed packages
+vcpkg_installed
+
+# Compiled shaders
+*.spv
