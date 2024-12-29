@@ -59,7 +59,7 @@ void App::InitVulkan() {
   CreateGraphicsPipeline();
   CreateFramebuffers();
   CreateCommandPool();
-  CreateCommandBuffer();
+  CreateCommandBuffers();
   CreateSyncObjects();
 }
 
@@ -752,16 +752,18 @@ void App::CreateCommandPool() {
   }
 }
 
-void App::CreateCommandBuffer() {
+void App::CreateCommandBuffers() {
   spdlog::trace("App::CreateCommandBuffer()");
+
+  commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
 
   VkCommandBufferAllocateInfo allocInfo = {};
   allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
   allocInfo.commandPool = commandPool;
   allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  allocInfo.commandBufferCount = 1;
+  allocInfo.commandBufferCount = static_cast<uint32_t>(commandBuffers.size());
 
-  if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) !=
+  if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) !=
       VK_SUCCESS) {
     throw std::runtime_error("Failed to allocate command buffers");
   }
@@ -769,6 +771,10 @@ void App::CreateCommandBuffer() {
 
 void App::CreateSyncObjects() {
   spdlog::trace("App::CreateSyncObjects()");
+
+  imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+  renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+  inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
 
   VkSemaphoreCreateInfo semaphoreInfo = {};
   semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -779,18 +785,27 @@ void App::CreateSyncObjects() {
                                     // wait on it immediately
   fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 
-  // Create the semaphores and fences
-  if (vkCreateSemaphore(device, &semaphoreInfo, nullptr,
-                        &imageAvailableSemaphore) != VK_SUCCESS ||
-      vkCreateSemaphore(device, &semaphoreInfo, nullptr,
-                        &renderFinishedSemaphore) != VK_SUCCESS ||
-      vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) !=
-          VK_SUCCESS) {
-    throw std::runtime_error("failed to create semaphores!");
+  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    // Create the semaphores and fences
+    if (vkCreateSemaphore(device, &semaphoreInfo, nullptr,
+                          &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+        vkCreateSemaphore(device, &semaphoreInfo, nullptr,
+                          &renderFinishedSemaphores[i]) != VK_SUCCESS ||
+        vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) !=
+            VK_SUCCESS) {
+      throw std::runtime_error("failed to create semaphores!");
+    }
   }
 }
 
 void App::DrawFrame() {
+  static uint32_t currentFrame = 0;
+
+  auto &inFlightFence = inFlightFences[currentFrame];
+  auto &imageAvailableSemaphore = imageAvailableSemaphores[currentFrame];
+  auto &renderFinishedSemaphore = renderFinishedSemaphores[currentFrame];
+  auto &commandBuffer = commandBuffers[currentFrame];
+
   // Wait for the fence to signal that the frame is finished
   // This is important because we don't want to start drawing a new frame
   // while the previous one is still in flight
@@ -858,6 +873,8 @@ void App::DrawFrame() {
   presentInfo.pResults = nullptr; // Optional
 
   vkQueuePresentKHR(presentQueue, &presentInfo);
+
+  currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
 void App::MainLoop() {
@@ -891,9 +908,13 @@ void App::Cleanup() {
   vkDestroyPipeline(device, pipeline, nullptr);
   vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
   vkDestroyRenderPass(device, renderPass, nullptr);
-  vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
-  vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
-  vkDestroyFence(device, inFlightFence, nullptr);
+
+  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
+    vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
+    vkDestroyFence(device, inFlightFences[i], nullptr);
+  }
+
   vkDestroyDevice(device, nullptr);
 
   if (enableValidationLayers) {

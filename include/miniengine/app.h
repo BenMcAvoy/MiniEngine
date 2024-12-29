@@ -24,6 +24,8 @@ constexpr bool enableValidationLayers = false;
 constexpr bool enableValidationLayers = true;
 #endif
 
+constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+
 // NOLINTNEXTLINE
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -54,7 +56,7 @@ private:
   void CreateGraphicsPipeline();
   void CreateFramebuffers();
   void CreateCommandPool();
-  void CreateCommandBuffer();
+  void CreateCommandBuffers();
   void CreateSyncObjects();
   void DrawFrame();
   void MainLoop();
@@ -134,22 +136,30 @@ private:
   VkPipelineLayout pipelineLayout;
   VkPipeline pipeline;
   VkCommandPool commandPool;
-  VkCommandBuffer commandBuffer;
+
+  // VkCommandBuffer commandBuffer;
+  std::vector<VkCommandBuffer> commandBuffers;
 
   std::vector<VkImage> swapchainImages;
   std::vector<VkImageView> swapchainImageViews;
 
   std::vector<VkFramebuffer> swapchainFramebuffers;
 
-  // This semaphore will signal when the image is available to render to.
+  /*// This semaphore will signal when the image is available to render to.
   VkSemaphore imageAvailableSemaphore;
-
   // This semaphore will signal when rendering has finished and the image can be
   // presented.
   VkSemaphore renderFinishedSemaphore;
-
   // This fence will signal when the command buffer has finished executing.
-  VkFence inFlightFence;
+  VkFence inFlightFence;*/
+
+  // This semaphore will signal when the image is available to render to.
+  std::vector<VkSemaphore> imageAvailableSemaphores;
+  // This semaphore will signal when rendering has finished and the image can be
+  // presented.
+  std::vector<VkSemaphore> renderFinishedSemaphores;
+  // This fence will signal when the command buffer has finished executing.
+  std::vector<VkFence> inFlightFences;
 
   bool extensionsSupported;
 };
