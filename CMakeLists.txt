@@ -25,6 +25,7 @@ find_package(spdlog CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(Vulkan REQUIRED)
 find_package(Stb REQUIRED)
+find_package(imgui CONFIG REQUIRED)
 
 # MiniEngine
 file (GLOB_RECURSE RIVET_SOURCES "src/*.cpp")
@@ -33,4 +34,4 @@ add_executable(MiniEngine ${RIVET_SOURCES})
 target_include_directories(MiniEngine PRIVATE include ${Stb_INCLUDE_DIR})
 
 # link to vulkan
-target_link_libraries(MiniEngine PRIVATE fmt::fmt glfw spdlog::spdlog glm::glm Vulkan::Vulkan)
+target_link_libraries(MiniEngine PRIVATE fmt::fmt glfw spdlog::spdlog glm::glm Vulkan::Vulkan imgui::imgui)

@@ -117,6 +117,7 @@ private:
   void CreateSyncObjects();
   void CleanupSwapchain();
   void RecreateSwapchain();
+  void SetupImGui();
   void DrawFrame();
   void MainLoop();
   void Cleanup();
@@ -200,6 +201,9 @@ private:
   VkCommandPool commandPool;
   VkBuffer vertexBuffer;
   VkDeviceMemory vertexBufferMemory;
+
+  VkDescriptorPool imguiDescriptorPool;
+  VkClearValue clearColor = {{{0.01f, 0.01f, 0.02f, 1.0f}}};
 
   // VkCommandBuffer commandBuffer;
   std::vector<VkCommandBuffer> commandBuffers;

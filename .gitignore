@@ -10,3 +10,6 @@ vcpkg_installed
 
 # Compiled shaders
 *.spv
+
+# Configuration files
+imgui.ini

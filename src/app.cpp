@@ -4,6 +4,10 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
+
 #include <fstream>
 #include <map>
 #include <set>
@@ -24,6 +28,7 @@ void App::Run() {
 
   InitWindow();
   InitVulkan();
+  SetupImGui();
   MainLoop();
 }
 
@@ -630,17 +635,15 @@ void App::CreateRenderPass() {
       VK_SAMPLE_COUNT_1_BIT; // Number of samples to write for multisampling
 
   // TODO: When we render more, we can use this to clear the framebuffer
-  /*colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; // Clear the
-   * framebuffer automatically (no need to manually clear!)*/
-  /*colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE; // Store the
-   * result*/
+  colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 
   // We don't care about the previous contents of the framebuffer as we're
   // rendering over it with the exact same data, so we can use
-  // VK_ATTACHMENT_LOAD_OP_DONT_CARE to tell Vulkan that we don't care about the
-  // previous contents.
-  colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-  colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  // VK_ATTACHMENT_LOAD_OP_DONT_CARE to tell Vulkan that we don't care about
+  // the previous contents.
+  /*colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;*/
+  /*colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;*/
 
   // Stencil buffer settings
   colorAttachment.initialLayout =
@@ -880,6 +883,56 @@ void App::RecreateSwapchain() {
   CreateFramebuffers();
 }
 
+void App::SetupImGui() {
+  spdlog::trace("App::SetupImGui()");
+  // TODO: Is this oversized?
+  VkDescriptorPoolSize poolSizes[] = {
+      {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
+      {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+      {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
+      {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+      {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
+      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
+      {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}};
+
+  VkDescriptorPoolCreateInfo poolInfo = {};
+  poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+  poolInfo.poolSizeCount = std::size(poolSizes);
+  poolInfo.pPoolSizes = poolSizes;
+  poolInfo.maxSets = 1000;
+
+  if (vkCreateDescriptorPool(device, &poolInfo, nullptr,
+                             &imguiDescriptorPool) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create descriptor pool");
+  }
+
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGui_ImplGlfw_InitForVulkan(window, true);
+
+  // Log out the ImGui version
+  spdlog::info("ImGui version: {}", IMGUI_VERSION);
+
+  ImGui_ImplVulkan_InitInfo initInfo = {};
+  initInfo.Instance = instance;
+  initInfo.PhysicalDevice = physicalDevice;
+  initInfo.Device = device;
+  initInfo.Queue = graphicsQueue;
+  initInfo.DescriptorPool = imguiDescriptorPool;
+  initInfo.MinImageCount = MAX_FRAMES_IN_FLIGHT;
+  initInfo.ImageCount = static_cast<uint32_t>(swapchainImages.size());
+  initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+  initInfo.RenderPass = renderPass;
+  initInfo.Allocator = nullptr;
+
+  ImGui_ImplVulkan_Init(&initInfo);
+}
+
 void App::DrawFrame() {
   static uint32_t currentFrame = 0;
 
@@ -996,6 +1049,19 @@ void App::Cleanup() {
   spdlog::trace("App::Cleanup()");
 
   CleanupSwapchain();
+
+  // Cleanup ImGui
+  ImGui_ImplVulkan_Shutdown();
+  ImGui_ImplGlfw_Shutdown();
+  ImGui::DestroyContext();
+
+  // TODO: Is this the correct way to clean up the descriptor pool?
+  vkWaitForFences(device, MAX_FRAMES_IN_FLIGHT, inFlightFences.data(), VK_TRUE,
+                  UINT64_MAX); // Wait for the fences to signal that the frame
+                               // is finished, this is important because we
+                               // don't want to wipe out the descriptor pool
+                               // while ImGui is still using it
+  vkDestroyDescriptorPool(device, imguiDescriptorPool, nullptr);
 
   // Clean up the vertex buffer and memory
   vkDestroyBuffer(device, vertexBuffer, nullptr);
@@ -1372,10 +1438,6 @@ void App::RecordCommandBuffer(VkCommandBuffer commandBuffer,
       swapchainExtent; // The size of the framebuffer (window size which is the
                        // swapchain extent)S
 
-  VkClearValue clearColor = {
-      {{0.0f, 0.0f, 0.0f,
-        1.0f}}}; // Clear the framebuffer to black, we could potentially do this
-                 // with a colour attachment clear in the render pass
   renderPassInfo.clearValueCount = 1;        // We only have one clear value
   renderPassInfo.pClearValues = &clearColor; // The clear value
 
@@ -1407,6 +1469,21 @@ void App::RecordCommandBuffer(VkCommandBuffer commandBuffer,
 
   // Draw the vertices
   vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+
+  ImGui_ImplVulkan_NewFrame();
+  ImGui_ImplGlfw_NewFrame();
+  ImGui::NewFrame();
+
+  ImGui::SetNextWindowSize(ImVec2(300, 100), ImGuiCond_FirstUseEver);
+  ImGui::Begin("Controls");
+
+  ImGui::ColorEdit3("Clear Color", &clearColor.color.float32[0]);
+
+  ImGui::End();
+
+  ImGui::Render();
+  ImDrawData *drawData = ImGui::GetDrawData();
+  ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer);
 
   vkCmdEndRenderPass(commandBuffer);
 

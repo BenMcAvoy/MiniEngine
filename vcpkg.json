@@ -2,8 +2,16 @@
   "dependencies": [
     "fmt",
     "glfw3",
+    "glm",
+    {
+      "name": "imgui",
+      "features": [
+        "docking-experimental",
+        "vulkan-binding",
+        "glfw-binding"
+      ]
+    },
     "spdlog",
-    "stb",
-    "glm"
+    "stb"
   ]
 }
