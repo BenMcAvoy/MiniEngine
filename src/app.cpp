@@ -61,6 +61,7 @@ void App::InitVulkan() {
   CreateGraphicsPipeline();
   CreateFramebuffers();
   CreateCommandPool();
+  CreateVertexBuffer();
   CreateCommandBuffers();
   CreateSyncObjects();
 }
@@ -74,10 +75,10 @@ void App::CreateInstance() {
 
   VkApplicationInfo appInfo = {};
   appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-  appInfo.pApplicationName = "MiniEngine App";
-  appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+  appInfo.pApplicationName = "MiniEngine test";
+  appInfo.applicationVersion = VK_MAKE_VERSION(0, 0, 1);
   appInfo.pEngineName = "MiniEngine";
-  appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+  appInfo.engineVersion = VK_MAKE_VERSION(0, 0, 1);
   appInfo.apiVersion = VK_API_VERSION_1_0;
 
   VkInstanceCreateInfo createInfo = {};
@@ -431,6 +432,9 @@ void App::CreateGraphicsPipeline() {
   dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
   dynamicState.pDynamicStates = dynamicStates.data();
 
+  auto bindingDescription = Vertex::GetBindingDescription();
+  auto attributeDescriptions = Vertex::GetAttributeDescriptions();
+
   // Vertex input is similar to a VAO in OpenGL. It describes the format of
   // the vertex data that will be passed to the vertex shader.
   // Only here it is in the form of a struct that is passed to the pipeline.
@@ -439,10 +443,19 @@ void App::CreateGraphicsPipeline() {
   VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
   vertexInputInfo.sType =
       VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  vertexInputInfo.vertexBindingDescriptionCount = 0;    // No vertex buffers
-  vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional
-  vertexInputInfo.vertexAttributeDescriptionCount = 0;  // No vertex attributes
-  vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+  vertexInputInfo.vertexBindingDescriptionCount = 1;
+  vertexInputInfo.vertexAttributeDescriptionCount =
+      static_cast<uint32_t>(attributeDescriptions.size());
+  vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+  vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+  // A binding description specifies the rate at which data is loaded from
+  // memory throughout the vertices. The rate can be per vertex or per
+  // instance. It is like stride and glVertexAttribPointer in OpenGL.
+  // A vertex attribute description specifies the format of the vertex data
+  // that will be passed to the vertex shader. It specifies the binding
+  // location, format, offset and whether the data is per vertex or per
+  // instance. It is like glVertexAttribPointer in OpenGL.
 
   // Input assembly describes what kind of geometry will be drawn from the
   // vertices and if primitive restart (allows for breaking up lines and
@@ -743,6 +756,55 @@ void App::CreateCommandPool() {
   }
 }
 
+void App::CreateVertexBuffer() {
+  spdlog::trace("App::CreateVertexBuffers()");
+  VkBufferCreateInfo bufferInfo = {};
+  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufferInfo.size = sizeof(vertices[0]) *
+                    vertices.size(); // Size of a Vertex * Number of vertices
+  bufferInfo.usage =
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT; // Buffer is used as a vertex buffer
+  bufferInfo.sharingMode =
+      VK_SHARING_MODE_EXCLUSIVE; // Buffer is exclusive to a single queue family
+                                 // (graphics queue family)
+
+  if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("Failed to create vertex buffer");
+  }
+
+  VkMemoryRequirements memRequirements;
+  vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
+
+  VkMemoryAllocateInfo allocInfo = {};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = FindMemoryType(
+      memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  // Memory the host can map to memory must be host visible we can map it. If
+  // it's coherent it means it won't be cached, it will be written directly to
+  // the memory.
+
+  if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("Failed to allocate vertex buffer memory");
+  }
+
+  // Connect the buffer to the memory
+  vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+
+  void *data;
+  vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+
+  // We now have the memory mapped to the host, we can copy the vertex data
+  // into it
+  memcpy(data, vertices.data(), (size_t)bufferInfo.size);
+  vkUnmapMemory(device, vertexBufferMemory);
+
+  spdlog::info("Mapped data to vertex buffer");
+}
+
 void App::CreateCommandBuffers() {
   spdlog::trace("App::CreateCommandBuffer()");
 
@@ -935,6 +997,10 @@ void App::Cleanup() {
 
   CleanupSwapchain();
 
+  // Clean up the vertex buffer and memory
+  vkDestroyBuffer(device, vertexBuffer, nullptr);
+  vkFreeMemory(device, vertexBufferMemory, nullptr);
+
   vkDestroyCommandPool(device, commandPool, nullptr);
   vkDestroyPipeline(device, pipeline, nullptr);
   vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -1048,6 +1114,8 @@ DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
 }
 
 void FramebufferResizeCallback(GLFWwindow *window, int width, int height) {
+  (void)width;
+  (void)height;
   auto app = reinterpret_cast<App *>(glfwGetWindowUserPointer(window));
   app->framebufferResized = true;
 }
@@ -1332,13 +1400,38 @@ void App::RecordCommandBuffer(VkCommandBuffer commandBuffer,
   scissor.extent = swapchainExtent;
   vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-  vkCmdDraw(commandBuffer, 3, 1, 0,
-            0); // first vertex is start and no instanced rendering, 3 vertices
+  // Bind the vertex buffer
+  VkBuffer vertexBuffers[] = {vertexBuffer};
+  VkDeviceSize offsets[] = {0};
+  vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+  // Draw the vertices
+  vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
   vkCmdEndRenderPass(commandBuffer);
 
   if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
     throw std::runtime_error("Failed to record command buffer");
   }
+}
+
+uint32_t App::FindMemoryType(uint32_t typeFilter,
+                             VkMemoryPropertyFlags properties) {
+  VkPhysicalDeviceMemoryProperties memProperties;
+  vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
+  for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+    if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags &
+                                    properties) == properties) {
+      // The memory type is suitable for the buffer (it's in the type filter and
+      // has the required properties)
+      // We aren't concerned with the index of the memory type, just that it
+      // exists, we could check for whether it's the best memory type for the
+      // buffer, but we're not doing that here
+      return i;
+    }
+  }
+
+  throw std::runtime_error("Failed to find suitable memory type");
 }
 } // namespace MiniEngine

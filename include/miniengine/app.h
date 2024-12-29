@@ -1,6 +1,7 @@
 #define GLFW_INCLUDE_VULKAN
 
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
 #include <chrono>
@@ -26,6 +27,11 @@ constexpr bool enableValidationLayers = true;
 
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
+#define SHADER_FLOAT VK_FORMAT_R32_SFLOAT
+#define SHADER_VEC2 VK_FORMAT_R32G32_SFLOAT
+#define SHADER_VEC3 VK_FORMAT_R32G32B32_SFLOAT
+#define SHADER_VEC4 VK_FORMAT_R32G32B32A32_SFLOAT
+
 // NOLINTNEXTLINE
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -35,6 +41,50 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
 // NOLINTNEXTLINE
 static void FramebufferResizeCallback(GLFWwindow *window, int width,
                                       int height);
+
+struct Vertex {
+  glm::vec2 pos;
+  glm::vec3 colour;
+
+  static VkVertexInputBindingDescription GetBindingDescription() {
+    VkVertexInputBindingDescription bindingDescription{};
+    bindingDescription.binding = 0; // This is like the index of the buffer.
+    bindingDescription.stride = sizeof(Vertex); // Same as OpenGL.
+    bindingDescription.inputRate =
+        VK_VERTEX_INPUT_RATE_VERTEX; // Move to the next data entry after each
+                                     // vertex, not after each instance.
+
+    return bindingDescription;
+  }
+
+  static std::array<VkVertexInputAttributeDescription, 2>
+  GetAttributeDescriptions() {
+    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+
+    // Position attribute
+    attributeDescriptions[0].binding = 0; // This is the index of the buffer.
+    attributeDescriptions[0].location =
+        0; // This is the location in the shader.
+    attributeDescriptions[0].format = SHADER_VEC2; // 2x32-bit float. (vec2)
+    attributeDescriptions[0].offset =
+        offsetof(Vertex, pos); // Offset of the data.
+
+    // Colour attribute
+    attributeDescriptions[1].binding = 0; // This is the index of the buffer.
+    attributeDescriptions[1].location =
+        1; // This is the location in the shader.
+    attributeDescriptions[1].format = SHADER_VEC3; // 3x32-bit float. (vec3)
+    attributeDescriptions[1].offset =
+        offsetof(Vertex, colour); // Offset of the data.
+
+    return attributeDescriptions;
+  }
+};
+
+constexpr std::array<Vertex, 3> vertices = {
+    Vertex{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    Vertex{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    Vertex{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}};
 
 class App {
 public:
@@ -62,6 +112,7 @@ private:
   void CreateGraphicsPipeline();
   void CreateFramebuffers();
   void CreateCommandPool();
+  void CreateVertexBuffer();
   void CreateCommandBuffers();
   void CreateSyncObjects();
   void CleanupSwapchain();
@@ -126,6 +177,9 @@ private:
 
   void RecordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 
+  uint32_t FindMemoryType(uint32_t typeFilter,
+                          VkMemoryPropertyFlags properties);
+
   // Data members
   std::chrono::time_point<std::chrono::high_resolution_clock> startTime;
 
@@ -144,6 +198,8 @@ private:
   VkPipelineLayout pipelineLayout;
   VkPipeline pipeline;
   VkCommandPool commandPool;
+  VkBuffer vertexBuffer;
+  VkDeviceMemory vertexBufferMemory;
 
   // VkCommandBuffer commandBuffer;
   std::vector<VkCommandBuffer> commandBuffers;
