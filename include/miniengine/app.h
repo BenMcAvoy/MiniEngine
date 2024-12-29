@@ -32,12 +32,18 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
     VkDebugUtilsMessageTypeFlagsEXT messageType,
     const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData);
 
+// NOLINTNEXTLINE
+static void FramebufferResizeCallback(GLFWwindow *window, int width,
+                                      int height);
+
 class App {
 public:
   App();
   ~App();
 
   void Run();
+
+  bool framebufferResized = false;
 
 private:
   // Member functions
@@ -58,6 +64,8 @@ private:
   void CreateCommandPool();
   void CreateCommandBuffers();
   void CreateSyncObjects();
+  void CleanupSwapchain();
+  void RecreateSwapchain();
   void DrawFrame();
   void MainLoop();
   void Cleanup();

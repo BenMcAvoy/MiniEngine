@@ -42,6 +42,8 @@ void App::InitWindow() {
     throw std::runtime_error("Failed to create window");
   }
 
+  glfwSetFramebufferSizeCallback(window, FramebufferResizeCallback);
+
   glfwSetWindowUserPointer(window, this);
 }
 
@@ -194,7 +196,7 @@ void App::PopulateDebugMessengerCreateInfo(
   createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
                            VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
                            VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-  createInfo.pfnUserCallback = DebugCallback;
+  createInfo.pfnUserCallback = MiniEngine::DebugCallback;
   createInfo.pUserData = nullptr; // Optional
 }
 
@@ -299,8 +301,6 @@ void App::CreateLogicalDevice() {
 }
 
 void App::CreateSwapchain() {
-  spdlog::trace("App::CreateSwapchain()");
-
   App::SwapchainSupportDetails swapChainSupport =
       QuerySwapchainSupport(physicalDevice);
 
@@ -365,7 +365,7 @@ void App::CreateSwapchain() {
 }
 
 void App::CreateImageViews() {
-  spdlog::trace("App::CreateImageViews()");
+  swapchainImageViews.resize(swapchainImages.size());
 
   for (size_t i = 0; i < swapchainImages.size(); i++) {
     VkImageViewCreateInfo createInfo = {};
@@ -383,13 +383,10 @@ void App::CreateImageViews() {
     createInfo.subresourceRange.baseArrayLayer = 0;
     createInfo.subresourceRange.layerCount = 1;
 
-    VkImageView imageView;
-    if (vkCreateImageView(device, &createInfo, nullptr, &imageView) !=
-        VK_SUCCESS) {
+    if (vkCreateImageView(device, &createInfo, nullptr,
+                          &swapchainImageViews[i]) != VK_SUCCESS) {
       throw std::runtime_error("Failed to create image views");
     }
-
-    swapchainImageViews.emplace_back(imageView);
   }
 }
 
@@ -709,18 +706,12 @@ void App::CreateRenderPass() {
 }
 
 void App::CreateFramebuffers() {
-  spdlog::trace("App::CreateFramebuffers()");
-
-  // We should havee the same amount of framebuffers as we have swap chain
-  // image views, as image views are bound to framebuffers
   swapchainFramebuffers.resize(swapchainImageViews.size());
 
   for (size_t i = 0; i < swapchainImageViews.size(); i++) {
     VkImageView attachments[] = {swapchainImageViews[i]};
 
-    // Make the framebuffer creation info match the swap chain
-    // image view and render pass
-    VkFramebufferCreateInfo framebufferInfo = {};
+    VkFramebufferCreateInfo framebufferInfo{};
     framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     framebufferInfo.renderPass = renderPass;
     framebufferInfo.attachmentCount = 1;
@@ -731,7 +722,7 @@ void App::CreateFramebuffers() {
 
     if (vkCreateFramebuffer(device, &framebufferInfo, nullptr,
                             &swapchainFramebuffers[i]) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to create framebuffer");
+      throw std::runtime_error("failed to create framebuffer!");
     }
   }
 }
@@ -798,6 +789,35 @@ void App::CreateSyncObjects() {
   }
 }
 
+void App::CleanupSwapchain() {
+  for (auto framebuffer : swapchainFramebuffers) {
+    vkDestroyFramebuffer(device, framebuffer, nullptr);
+  }
+
+  for (auto &imageView : swapchainImageViews) {
+    vkDestroyImageView(device, imageView, nullptr);
+  }
+
+  vkDestroySwapchainKHR(device, swapchain, nullptr);
+}
+
+void App::RecreateSwapchain() {
+  int width = 0, height = 0;
+  glfwGetFramebufferSize(window, &width, &height);
+  while (width == 0 || height == 0) {
+    glfwGetFramebufferSize(window, &width, &height);
+    glfwWaitEvents();
+  }
+
+  vkDeviceWaitIdle(device);
+
+  CleanupSwapchain();
+
+  CreateSwapchain();
+  CreateImageViews();
+  CreateFramebuffers();
+}
+
 void App::DrawFrame() {
   static uint32_t currentFrame = 0;
 
@@ -813,12 +833,22 @@ void App::DrawFrame() {
   // by this function meaning if our drawing takes 1ms, we can still update
   // using the remaining 15ms of the frame
   vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
-  vkResetFences(device, 1, &inFlightFence); // Reset the fence to unsignaledS
 
   // Acquire an image from the swap chainm, using a semaphore not a fence!
   uint32_t imageIndex;
-  vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, imageAvailableSemaphore,
-                        VK_NULL_HANDLE, &imageIndex);
+  auto res = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,
+                                   imageAvailableSemaphore, VK_NULL_HANDLE,
+                                   &imageIndex);
+
+  if (res == VK_ERROR_OUT_OF_DATE_KHR) {
+    RecreateSwapchain();
+    return;
+  } else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
+    throw std::runtime_error("Failed to acquire swap chain image");
+  }
+
+  // Now that we know the surface is up to date, we can reset the fence
+  vkResetFences(device, 1, &inFlightFence); // Reset the fence to unsignaled
 
   // Reset the command buffer to the initial state
   vkResetCommandBuffer(commandBuffer, 0);
@@ -872,7 +902,15 @@ void App::DrawFrame() {
   presentInfo.pImageIndices = &imageIndex;
   presentInfo.pResults = nullptr; // Optional
 
-  vkQueuePresentKHR(presentQueue, &presentInfo);
+  res = vkQueuePresentKHR(presentQueue, &presentInfo);
+
+  if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR ||
+      framebufferResized) {
+    framebufferResized = false;
+    RecreateSwapchain();
+  } else if (res != VK_SUCCESS) {
+    throw std::runtime_error("failed to present swap chain image!");
+  }
 
   currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
@@ -895,16 +933,9 @@ void App::MainLoop() {
 void App::Cleanup() {
   spdlog::trace("App::Cleanup()");
 
-  for (auto imageView : swapchainImageViews) {
-    vkDestroyImageView(device, imageView, nullptr);
-  }
-
-  for (auto framebuffer : swapchainFramebuffers) {
-    vkDestroyFramebuffer(device, framebuffer, nullptr);
-  }
+  CleanupSwapchain();
 
   vkDestroyCommandPool(device, commandPool, nullptr);
-  vkDestroySwapchainKHR(device, swapchain, nullptr);
   vkDestroyPipeline(device, pipeline, nullptr);
   vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
   vkDestroyRenderPass(device, renderPass, nullptr);
@@ -971,7 +1002,7 @@ std::vector<const char *> App::GetRequiredExtensions() {
   return extensions;
 }
 
-static VKAPI_ATTR VkBool32 VKAPI_CALL
+VKAPI_ATTR VkBool32 VKAPI_CALL
 DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
               VkDebugUtilsMessageTypeFlagsEXT messageType,
               const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
@@ -1014,6 +1045,11 @@ DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
   }
 
   return VK_FALSE;
+}
+
+void FramebufferResizeCallback(GLFWwindow *window, int width, int height) {
+  auto app = reinterpret_cast<App *>(glfwGetWindowUserPointer(window));
+  app->framebufferResized = true;
 }
 
 VkResult App::CreateDebugUtilsMessengerEXT(
