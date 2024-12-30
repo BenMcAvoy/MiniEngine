@@ -8,6 +8,8 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 
+#include <glm/gtc/type_ptr.hpp>
+
 #include <fstream>
 #include <map>
 #include <set>
@@ -67,6 +69,7 @@ void App::InitVulkan() {
   CreateFramebuffers();
   CreateCommandPool();
   CreateVertexBuffer();
+  CreateIndexBuffer();
   CreateCommandBuffers();
   CreateSyncObjects();
 }
@@ -761,51 +764,63 @@ void App::CreateCommandPool() {
 
 void App::CreateVertexBuffer() {
   spdlog::trace("App::CreateVertexBuffers()");
-  VkBufferCreateInfo bufferInfo = {};
-  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  bufferInfo.size = sizeof(vertices[0]) *
-                    vertices.size(); // Size of a Vertex * Number of vertices
-  bufferInfo.usage =
-      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT; // Buffer is used as a vertex buffer
-  bufferInfo.sharingMode =
-      VK_SHARING_MODE_EXCLUSIVE; // Buffer is exclusive to a single queue family
-                                 // (graphics queue family)
 
-  if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) !=
-      VK_SUCCESS) {
-    throw std::runtime_error("Failed to create vertex buffer");
-  }
+  // Create a staging buffer to copy the vertex data to
+  VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
-  VkMemoryRequirements memRequirements;
-  vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
+  VkBuffer stagingBuffer;
+  VkDeviceMemory stagingBufferMemory;
+  CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+               stagingBuffer, stagingBufferMemory);
 
-  VkMemoryAllocateInfo allocInfo = {};
-  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-  allocInfo.allocationSize = memRequirements.size;
-  allocInfo.memoryTypeIndex = FindMemoryType(
-      memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-  // Memory the host can map to memory must be host visible we can map it. If
-  // it's coherent it means it won't be cached, it will be written directly to
-  // the memory.
+  // Copy the vertex data to the staging buffer
+  void *data;
+  vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+  memcpy(data, vertices.data(), (size_t)bufferSize);
+  vkUnmapMemory(device, stagingBufferMemory);
 
-  if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) !=
-      VK_SUCCESS) {
-    throw std::runtime_error("Failed to allocate vertex buffer memory");
-  }
+  // Create the vertex buffer
+  CreateBuffer(
+      bufferSize,
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
 
-  // Connect the buffer to the memory
-  vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+  // Copy the data from the staging buffer to the vertex buffer
+  CopyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+  // Clean up the staging buffer
+  vkDestroyBuffer(device, stagingBuffer, nullptr);
+  vkFreeMemory(device, stagingBufferMemory, nullptr);
+}
+
+void App::CreateIndexBuffer() {
+  spdlog::trace("App::CreateIndexBuffer()");
+
+  VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+  VkBuffer stagingBuffer;
+  VkDeviceMemory stagingBufferMemory;
+  CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+               stagingBuffer, stagingBufferMemory);
 
   void *data;
-  vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+  vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+  memcpy(data, indices.data(), (size_t)bufferSize);
+  vkUnmapMemory(device, stagingBufferMemory);
 
-  // We now have the memory mapped to the host, we can copy the vertex data
-  // into it
-  memcpy(data, vertices.data(), (size_t)bufferInfo.size);
-  vkUnmapMemory(device, vertexBufferMemory);
+  CreateBuffer(
+      bufferSize,
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
 
-  spdlog::info("Mapped data to vertex buffer");
+  CopyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+  vkDestroyBuffer(device, stagingBuffer, nullptr);
+  vkFreeMemory(device, stagingBufferMemory, nullptr);
 }
 
 void App::CreateCommandBuffers() {
@@ -913,6 +928,26 @@ void App::SetupImGui() {
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
+
+  ImGuiStyle &style = ImGui::GetStyle();
+  // Go through every colour and convert it to linear
+  // This is because ImGui uses linear colours but we are using sRGB
+  // This is a simple approximation of the conversion
+  for (int i = 0; i < ImGuiCol_COUNT; i++) {
+    /*float linear = (srgb <= 0.04045f) ? srgb / 12.92f : pow((srgb + 0.055f)
+     * / 1.055f, 2.4f);*/
+
+    ImVec4 &col = style.Colors[i];
+    col.x = col.x <= 0.04045f ? col.x / 12.92f
+                              : pow((col.x + 0.055f) / 1.055f, 2.4f);
+    col.y = col.y <= 0.04045f ? col.y / 12.92f
+                              : pow((col.y + 0.055f) / 1.055f, 2.4f);
+    col.z = col.z <= 0.04045f ? col.z / 12.92f
+                              : pow((col.z + 0.055f) / 1.055f, 2.4f);
+  }
+
+  style.FrameBorderSize = 0.0f;
+
   ImGui_ImplGlfw_InitForVulkan(window, true);
 
   // Log out the ImGui version
@@ -1066,6 +1101,10 @@ void App::Cleanup() {
   // Clean up the vertex buffer and memory
   vkDestroyBuffer(device, vertexBuffer, nullptr);
   vkFreeMemory(device, vertexBufferMemory, nullptr);
+
+  // Clean up the index buffer and memory
+  vkDestroyBuffer(device, indexBuffer, nullptr);
+  vkFreeMemory(device, indexBufferMemory, nullptr);
 
   vkDestroyCommandPool(device, commandPool, nullptr);
   vkDestroyPipeline(device, pipeline, nullptr);
@@ -1467,8 +1506,12 @@ void App::RecordCommandBuffer(VkCommandBuffer commandBuffer,
   VkDeviceSize offsets[] = {0};
   vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
+  // Bind the index buffer
+  vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
   // Draw the vertices
-  vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+  vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0,
+                   0, 0);
 
   ImGui_ImplVulkan_NewFrame();
   ImGui_ImplGlfw_NewFrame();
@@ -1477,7 +1520,59 @@ void App::RecordCommandBuffer(VkCommandBuffer commandBuffer,
   ImGui::SetNextWindowSize(ImVec2(300, 100), ImGuiCond_FirstUseEver);
   ImGui::Begin("Controls");
 
+  ImGui::SeparatorText("Colours");
   ImGui::ColorEdit3("Clear Color", &clearColor.color.float32[0]);
+
+  ImGui::SeparatorText("Vertex Data");
+  static Vertex vertices[] = {
+      {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+      {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+      {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+      {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}},
+  };
+
+  bool modified = false;
+  static auto modWrap = [&](std::function<bool()> f) {
+    if (f()) {
+      modified = true;
+    }
+  };
+
+  for (auto &vert : vertices) {
+    ImGui::PushID(&vert);
+    modWrap([&]() { return ImGui::DragFloat("X", &vert.pos.x, 0.01f); });
+    modWrap([&]() { return ImGui::DragFloat("Y", &vert.pos.y, 0.01f); });
+    modWrap([&]() {
+      return ImGui::ColorEdit3("Color", glm::value_ptr(vert.colour));
+    });
+    ImGui::Separator();
+    ImGui::PopID();
+  }
+
+  if (modified) {
+    // Create a staging buffer to copy the vertex data to
+    VkDeviceSize bufferSize = sizeof(vertices);
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                 stagingBuffer, stagingBufferMemory);
+
+    // Copy the vertex data to the staging buffer
+    void *data;
+    vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, vertices, (size_t)bufferSize);
+    vkUnmapMemory(device, stagingBufferMemory);
+
+    // Copy the data from the staging buffer to the vertex buffer
+    CopyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+    // Clean up the staging buffer
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingBufferMemory, nullptr);
+  }
 
   ImGui::End();
 
@@ -1510,5 +1605,75 @@ uint32_t App::FindMemoryType(uint32_t typeFilter,
   }
 
   throw std::runtime_error("Failed to find suitable memory type");
+}
+
+void App::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+                       VkMemoryPropertyFlags properties, VkBuffer &buffer,
+                       VkDeviceMemory &bufferMemory) {
+  VkBufferCreateInfo bufferInfo = {};
+  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufferInfo.size = size;
+  bufferInfo.usage = usage;
+  bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create buffer");
+  }
+
+  VkMemoryRequirements memRequirements;
+  vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+
+  VkMemoryAllocateInfo allocInfo = {};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex =
+      FindMemoryType(memRequirements.memoryTypeBits, properties);
+
+  if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("Failed to allocate buffer memory");
+  }
+
+  vkBindBufferMemory(device, buffer, bufferMemory, 0);
+}
+
+// NOTE: This function is blocking
+void App::CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer,
+                     VkDeviceSize size) {
+
+  // We need a command buffer to copy the buffer, as this operation
+  // uses memory not accessible by the host, so the operation needs
+  // to happen on the GPU
+  VkCommandBufferAllocateInfo allocInfo = {};
+  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandPool = commandPool;
+  allocInfo.commandBufferCount = 1;
+
+  VkCommandBuffer commandBuffer;
+  vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+
+  VkCommandBufferBeginInfo beginInfo = {};
+  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  vkBeginCommandBuffer(commandBuffer, &beginInfo); // Start recording
+
+  VkBufferCopy copyRegion = {};
+  copyRegion.size = size;
+  vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+
+  vkEndCommandBuffer(commandBuffer); // Finish recording
+
+  // Make the GPU do the work! (submit the command buffer)
+  VkSubmitInfo submitInfo = {};
+  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  submitInfo.commandBufferCount = 1;
+  submitInfo.pCommandBuffers = &commandBuffer;
+
+  vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+  vkQueueWaitIdle(graphicsQueue); // Wait for the queue to finish
+
+  // don't leave your house messy
+  vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 }
 } // namespace MiniEngine

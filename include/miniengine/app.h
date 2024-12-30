@@ -81,10 +81,13 @@ struct Vertex {
   }
 };
 
-constexpr std::array<Vertex, 3> vertices = {
-    Vertex{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    Vertex{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-    Vertex{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}};
+constexpr std::array<Vertex, 4> vertices = {
+    Vertex{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    Vertex{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+    Vertex{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+    Vertex{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}};
+
+constexpr std::array<uint16_t, 6> indices = {0, 1, 2, 2, 3, 0};
 
 class App {
 public:
@@ -113,6 +116,7 @@ private:
   void CreateFramebuffers();
   void CreateCommandPool();
   void CreateVertexBuffer();
+  void CreateIndexBuffer();
   void CreateCommandBuffers();
   void CreateSyncObjects();
   void CleanupSwapchain();
@@ -181,6 +185,12 @@ private:
   uint32_t FindMemoryType(uint32_t typeFilter,
                           VkMemoryPropertyFlags properties);
 
+  void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+                    VkMemoryPropertyFlags properties, VkBuffer &buffer,
+                    VkDeviceMemory &bufferMemory);
+
+  void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+
   // Data members
   std::chrono::time_point<std::chrono::high_resolution_clock> startTime;
 
@@ -199,8 +209,11 @@ private:
   VkPipelineLayout pipelineLayout;
   VkPipeline pipeline;
   VkCommandPool commandPool;
+
   VkBuffer vertexBuffer;
   VkDeviceMemory vertexBufferMemory;
+  VkBuffer indexBuffer;
+  VkDeviceMemory indexBufferMemory;
 
   VkDescriptorPool imguiDescriptorPool;
   VkClearValue clearColor = {{{0.01f, 0.01f, 0.02f, 1.0f}}};
@@ -212,14 +225,6 @@ private:
   std::vector<VkImageView> swapchainImageViews;
 
   std::vector<VkFramebuffer> swapchainFramebuffers;
-
-  /*// This semaphore will signal when the image is available to render to.
-  VkSemaphore imageAvailableSemaphore;
-  // This semaphore will signal when rendering has finished and the image can be
-  // presented.
-  VkSemaphore renderFinishedSemaphore;
-  // This fence will signal when the command buffer has finished executing.
-  VkFence inFlightFence;*/
 
   // This semaphore will signal when the image is available to render to.
   std::vector<VkSemaphore> imageAvailableSemaphores;
